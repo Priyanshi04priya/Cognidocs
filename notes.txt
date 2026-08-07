@@ -1,0 +1,9 @@
+To run this Application:
+# Qdrant (agar pehle se nahi chal raha)
+docker compose up -d
+
+# Terminal 1
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 (agar band hai)
+streamlit run streamlit_app.py
