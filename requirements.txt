@@ -1,0 +1,32 @@
+# Web API & Frontend
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+streamlit==1.41.1
+python-multipart==0.0.20
+httpx==0.28.1
+requests==2.32.3
+
+# Celery + Redis
+celery[redis]==5.4.0
+redis==5.2.1
+
+# LangGraph / LangChain
+langgraph==0.2.60
+langchain==0.3.14
+langchain-openai==0.3.0
+langchain-core==0.3.29
+
+# Vector DB & Embeddings
+qdrant-client==1.12.1
+sentence-transformers==3.3.1
+
+# Document parsing
+pypdf==5.1.0
+python-docx==1.1.2
+email-validator==2.2.0
+
+# Config & utils
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+tenacity==9.0.0

@@ -1,145 +1,155 @@
-## AI-Powered Document Query Engine
+# AI Document Query Engine
 
-A domain-agnostic intelligent document analysis system built using **FastAPI, LangGraph, and Qdrant**.  
-Upload documents, submit multiple natural-language questions, and receive structured, verifiable answers — all through a single API request.
+Beginner-friendly RAG system that answers questions over **PDF**, **DOCX**, and **EML** files.
 
----
+- **FastAPI** — 2 REST endpoints (submit job + poll result)
+- **Streamlit** — simple upload / ask UI
+- **Qdrant** — per-job vector collections (tenant isolation)
+- **LangGraph** — 8-node stateful workflow with self-correction
+- **Celery + Redis** — background job queue
+- **CrossEncoder** (`ms-marco-MiniLM-L-6-v2`) — re-ranks retrieved chunks
+- **GPT-4.1 mini** — dual-persona answers (Analyst + Auditor)
 
-## ✨ Key Features
+## Architecture (8 LangGraph nodes)
 
-- **📍 Unified Processing Endpoint** – A single `/process` API handles both document ingestion and batch question answering in one request.
-- **🌎 Domain-Independent** – Automatically detects the document’s domain (Insurance, Legal, HR, Finance, etc.) and extracts relevant entities accordingly.
-- **🔒 Isolated Vector Storage** – Each job runs in its own Qdrant collection (`jobId`) to ensure strict data separation.
-- **⚡ Concurrent Query Handling** – Processes multiple questions in parallel for faster response times.
-
-### 🧠 Advanced RAG Pipeline
-
-- **Retrieval:** Fetches broadly relevant document chunks  
-- **Reranking:** Uses a CrossEncoder to refine context  
-- **Generation:** A dual-persona LLM (Analyst + Auditor) produces structured answers with self-evaluation and confidence scoring
-
-- **📂 Multi-Format Compatibility** – Supports PDF, DOCX, and EML documents.
-
----
-
-## 🏗 Architecture Overview
-
-Built on a **LangGraph stateful workflow** for transparency and maintainability:
-
-- **FastAPI Server** — Accepts requests and coordinates processing
-- **LangGraph Workflow** — Executes a sequence of debuggable processing nodes
-- **Qdrant Vector Database** — Stores embeddings per job
-- **LangChain + OpenAI** — Powers query understanding and answer generation
-- **Sentence Transformers** — Improves relevance through reranking
-- **Document Parsers** — PyMuPDF, python-docx, and mailparser extract clean text
-
----
-
-## 🔍 Processing Workflow
-
-Calling the `/process` endpoint triggers the pipeline:
-
-1. **preprocess** — Download, parse, and chunk the document  
-2. **batch_analyze_queries** — Detect domain and craft search queries  
-3. **load_to_db** — Store chunks in a job-specific vector collection  
-4. **batch_retrieve_docs** — Gather relevant context  
-5. **batch_rerank_docs** — Produce question-specific context  
-6. **batch_generate_answers** — Generate structured answers with self-review  
-
----
-
-## 📡 API Usage
-
-### POST `/process`
-
-Upload a document, process questions, and receive structured responses.
-
-### Request
-
-```json
-{
-  "jobId": "string",
-  "documents": "string (URL)",
-  "questions": ["string"]
-}
 ```
-- **jobId** — Unique identifier used as the Qdrant collection name  
-- **documents** — Public URL to a PDF/DOCX/EML file  
-- **questions** — List of natural language queries
-### Response
-```json
-{
-  "answers": [
-    {
-      "decision": "string",
-      "details": {},
-      "justification": "string",
-      "clauses": ["string"]
-    }
-  ]
-}
+1. ingest_documents
+2. detect_domain          → Legal | Insurance | HR | Finance
+3. chunk_and_index        → 1000 chars / 200 overlap → Qdrant job_{id}
+4. generate_subqueries    → 3–5 sub-queries
+5. retrieve               → top-5 semantic search per query (asyncio)
+6. rerank_hits            → CrossEncoder + dedupe
+7. generate_answers       → Analyst + Auditor JSON
+8. self_correct           → if weak → loop back to step 4
 ```
-- **decision** — Final concise outcome (e.g., “Approved”)
-- **details** — Extracted key information
-- **justification** — Step-by-step reasoning grounded in the document
-- **clauses** — Supporting excerpts or references
-## ⚙️ Setup Instructions
 
-Follow these steps to set up and run the project locally.
+## Quick start
 
----
-
-### 📌 Prerequisites
-
-- Python 3.9+
-- Docker (for Qdrant)
-- OpenAI API Key
-
----
-## 📥 Installation
+### 1. Start Qdrant + Redis
 
 ```bash
-git clone <your-repo-url>
-cd <your-repo-name>
+docker compose up -d
+```
+
+### 2. Install Python deps
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-### 🔐 Environment Configuration
 
-Create a `.env` file in the root directory:
-
-```env
-OPENAI_API_KEY="sk-..."
-QDRANT_URL="http://localhost:6333"
-QDRANT_API_KEY=null
-EMBEDDING_MODEL="text-embedding-3-small"
-```
-### 🐳 Run Qdrant (Vector Database)
+### 3. Configure env
 
 ```bash
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+cp .env.example .env
+# Edit .env and set OPENAI_API_KEY=sk-...
 ```
-## ▶️ Running the Application
+
+> Without an API key the pipeline still runs in **demo mode** (keyword domain
+> detection + structured placeholder answers) so you can test retrieval locally.
+
+### 4. Start the processes
+
+**Easiest local mode (recommended, especially on Windows)** — Celery not required when `SYNC_JOBS=true`:
 
 ```bash
-uvicorn main:app --reload
+# Terminal 1 — API (also runs jobs in a background thread)
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 — Streamlit UI
+streamlit run streamlit_app.py
 ```
-### Access the Application
 
-API: http://127.0.0.1:8000
+Open http://localhost:8501
 
-Interactive Docs (Swagger): http://127.0.0.1:8000/docs
-## 💻 Technology Stack
+**UI flow**
+1. Upload documents once (indexed into Qdrant)
+2. Ask as many questions as you want on the **same** documents
+3. Use sidebar **Clear session / new documents** to upload different files
 
-| Component     | Technology                       |
-|---------------|----------------------------------|
-| Backend       | FastAPI                          |
-| Workflow      | LangGraph                        |
-| RAG Framework | LangChain                        |
-| Vector DB     | Qdrant                           |
-| LLM           | OpenAI                           |
-| Reranker      | Sentence Transformers            |
-| Parsing       | PyMuPDF, python-docx, mailparser |
+**Optional Celery mode** — set `SYNC_JOBS=false` in `.env`, then also run:
 
-## 🏆 Why This Project Matters
+```bash
+# Windows:
+celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo
 
-This system goes beyond a typical Q&A tool. It is a **scalable, explainable, and high-accuracy document intelligence platform** capable of adapting to diverse industries while delivering trustworthy, auditable answers at scale.
+# Mac/Linux:
+celery -A app.celery_app.celery_app worker --loglevel=info
+```
+
+Open http://localhost:8501 and upload a document.
+
+## API
+
+### `POST /jobs`
+
+Multipart form:
+
+| Field      | Type   | Description              |
+|------------|--------|--------------------------|
+| `question` | string | Your question            |
+| `files`    | files  | PDF / DOCX / EML uploads |
+
+Returns:
+
+```json
+{ "job_id": "...", "status": "queued", "message": "..." }
+```
+
+### `GET /jobs/{job_id}`
+
+Returns status + dual-persona result when ready:
+
+```json
+{
+  "job_id": "...",
+  "status": "completed",
+  "result": {
+    "domain": "Legal",
+    "analyst": {
+      "answer": "...",
+      "confidence": 0.82,
+      "citations": [{"source": "contract.pdf", "clause": "...", "score": 0.71}],
+      "justification": ["Step 1...", "Step 2..."]
+    },
+    "auditor": { "...": "..." }
+  }
+}
+```
+
+## Project layout
+
+```
+app/
+  main.py              # FastAPI (2 endpoints)
+  config.py            # Settings from .env
+  models.py            # Pydantic schemas
+  celery_app.py        # Celery + Redis
+  tasks.py             # Background job
+  document_loader.py   # PDF / DOCX / EML
+  chunker.py           # 1000 / 200 chunking
+  embeddings.py        # SentenceTransformer
+  qdrant_store.py      # Per-job collections
+  reranker.py          # CrossEncoder
+  graph/
+    state.py           # LangGraph state
+    nodes.py           # 8 nodes
+    workflow.py        # Graph + self-correction edges
+streamlit_app.py       # Frontend
+docker-compose.yml     # Qdrant + Redis
+sample_docs/           # Example EML
+```
+
+## Notes for beginners
+
+1. Each uploaded job gets its **own Qdrant collection** (`job_<uuid>`).
+2. Self-correction re-runs sub-query generation up to `MAX_CORRECTION_LOOPS` (default 2).
+3. Keep **Qdrant** running (`docker compose up -d`). Redis is optional when `SYNC_JOBS=true`.
+4. First run downloads embedding + CrossEncoder models (one-time, can take a few minutes).
+5. **Windows tip:** keep `SYNC_JOBS=true` in `.env` so you only need API + Streamlit + Qdrant.
+6. If you use Celery on Windows:
+
+```bash
+celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo
+```
