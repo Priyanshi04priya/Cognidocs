@@ -1,7 +1,10 @@
 """Celery application — Redis is the broker and result backend."""
-
+#Redis stores the job queue + results.Celery runs those jobs in the background.
+"""celery_app.py → Celery app, Redis as broker + backend
+tasks.py → run_query_job (actual background work)
+main.py → enqueue task, then poll result by job_id
+"""
 from celery import Celery
-
 from app.config import settings
 
 celery_app = Celery(

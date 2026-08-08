@@ -7,3 +7,24 @@ uvicorn app.main:app --reload --port 8000
 
 # Terminal 2 (agar band hai)
 streamlit run streamlit_app.py
+
+User uploads files + question
+        ↓
+FastAPI creates job_id, saves files
+        ↓
+Celery sends task into Redis queue
+        ↓
+API immediately returns: { job_id, status: "queued" }
+        ↓
+Celery worker picks task from Redis
+        ↓
+Worker runs LangGraph RAG pipeline
+        ↓
+Result saved in Redis
+        ↓
+User polls GET /jobs/{job_id} until completed
+
+Redis = ticket counter / waiting list
+Celery worker = kitchen staff cooking orders
+FastAPI = waiter who takes the order and later brings the food
+job_id = your order number

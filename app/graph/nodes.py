@@ -111,7 +111,7 @@ def detect_domain(state: GraphState) -> GraphState:
     }
     best = max(scores, key=scores.get)
     best_score = scores[best]
-    
+
     #phle khud se check karenge why bcz its cheap and fast, then if score is low or tied we will ask LLM to classify the domain
     #as we are calling llm so we will check if openai key is set or not, if not then we will use keyword based classification
     if best_score < 2 and has_openai_key():
@@ -153,15 +153,16 @@ def chunk_and_index(state: GraphState) -> GraphState:
         return {**state, "error": f"Indexing failed: {exc}", "done": True}
 
 
-# ===================================================================
-# 4. Generate sub-queries
-# ===================================================================
+# ======================================================================
+# 4. Generate sub-queries   -------3 functions are under this section
+# ======================================================================
 
+#This function turns past Q&A turns into one text string the LLM can read as chat history.
 def _format_history(history: list[dict[str, str]], limit: int = 4) -> str:
-    if not history:
+    if not history: #if history is empty / missing → return empty string
         return ""
-    lines = []
-    for turn in history[-limit:]:
+    lines = [] #to store history in one string
+    for turn in history[-limit:]:  #Loop over only the last limit turns.
         q = (turn.get("question") or "").strip()
         a = (turn.get("answer") or "").strip()
         if q:
@@ -170,6 +171,18 @@ def _format_history(history: list[dict[str, str]], limit: int = 4) -> str:
             lines.append(f"Assistant: {a[:500]}")
     return "\n".join(lines)
 
+
+
+"""New question comes in
+   No history? → return as-is
+   Build cheap fallback
+   (if short + vague words → add "regarding: last question")
+   No OpenAI key? → return fallback
+    ↓
+   Ask LLM to rewrite clearly using history
+    ↓
+   Success → return rewritten question
+   Fail/empty → return fallback"""
 
 def _resolve_followup_question(question: str, history: list[dict[str, str]], domain: str) -> str:
     """
@@ -212,13 +225,20 @@ def _resolve_followup_question(question: str, history: list[dict[str, str]], dom
 def generate_subqueries(state: GraphState) -> GraphState:
     """Create 3–5 focused sub-queries from the user question (with chat context)."""
     logger.info("[%s] generate_subqueries (loop=%s)", state.get("job_id"), state.get("correction_loop", 0))
-    raw_question = state["question"]
-    domain = state.get("domain", "General")
+
+    raw_question = state["question"] #Exact latest user message (may be vague, like "describe it").
+    domain = state.get("domain", "General")#Document domain, or "General" if missing.
+
+    #correction_hint = feedback from the last failed attempt, used to improve the next search.
+    #updated through self_correct node, then passed back here to diversify the sub-queries.
+    #first time through → empty string, then filled in if the Analyst answer was weak.
+
     correction_hint = state.get("correction_reason", "")
-    history = state.get("chat_history") or []
+    history = state.get("chat_history") or [] #Past Q&A turns. If missing → empty list
 
     resolved = state.get("resolved_question") or _resolve_followup_question(
-        raw_question, history, domain
+        raw_question, history, domain  #If resolved_question already exists in state → reuse it
+        #Else call _resolve_followup_question to turn vague follow-ups into a clear question using history
     )
 
     # Default fallback sub-queries (work without an API key)
@@ -227,9 +247,21 @@ def generate_subqueries(state: GraphState) -> GraphState:
         "the", "and", "for", "what", "how", "who", "when", "where", "with", "from",
         "this", "that", "have", "describe", "explain", "brief", "whole", "detail",
         "want", "you", "please",
+        # pulls word-like tokens from resolved (letters/numbers, length ≥ 3) Drops common useless words: the, and, what, describe, please, etc.
+        # Keeps meaningful words only
     }]
     keyword_query = " ".join(tokens[:8]) if tokens else resolved
 
+
+    """5 backup search angles if LLM is unavailable/fails:
+    Full clear question
+    Keyword-only version
+    Domain-tagged question
+    “definition/overview” style,  Asks for a broad explanation: what it is, main features, overview. 
+    “key details” style, Asks for important specifics (numbers, conditions, exceptions), not just a definition.
+    Why 5 angles?
+    One query can miss relevant chunks. Multiple phrasings increase the chance of hitting the right passages.
+    """
     fallback = [
         resolved,
         keyword_query,
@@ -261,6 +293,8 @@ def generate_subqueries(state: GraphState) -> GraphState:
 
         cleaned = reply.strip("`").removeprefix("json").strip()
         queries = json.loads(cleaned)
+
+        #isinstance(value, type) checks: “Is this value this type?”
         if not isinstance(queries, list) or not queries:
             queries = fallback
         queries = [str(q) for q in queries][:5]
@@ -278,16 +312,16 @@ def generate_subqueries(state: GraphState) -> GraphState:
 # ===================================================================
 
 async def _search_one(job_id: str, query: str, top_k: int) -> list[dict[str, Any]]:
-    """Run one Qdrant search in a thread so we don't block the event loop."""
+    """Run one Qdrant search for one sub-query in a thread so we don't block the event loop."""
     return await asyncio.to_thread(search, job_id, query, top_k)
 
 
 async def _retrieve_all(job_id: str, queries: list[str], top_k: int) -> list[dict[str, Any]]:
-    """Fire all sub-query searches concurrently with asyncio."""
+    """Instead of searching one-by-one (slow), search all in parallel (faster), then combine."""
     tasks = [_search_one(job_id, q, top_k) for q in queries]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True) #Run all tasks concurrently. return_exceptions=True means: if one fails, don’t crash
 
-    hits: list[dict[str, Any]] = []
+    hits: list[dict[str, Any]] = [] #store results of subquery searches
     for result in results:
         if isinstance(result, Exception):
             logger.warning("Search task failed: %s", result)
@@ -307,9 +341,9 @@ def retrieve(state: GraphState) -> GraphState:
                 getattr(settings, "retrieve_k", settings.top_k),
             )
         )
-        return {**state, "raw_hits": hits}
+        return {**state, "raw_hits": hits} #Success → save all found chunks as raw_hits.
     except Exception as exc:
-        return {**state, "error": f"Retrieval failed: {exc}", "done": True}
+        return {**state, "error": f"Retrieval failed: {exc}", "done": True} #Something broke → save error and stop pipeline.
 
 
 # ===================================================================
@@ -323,6 +357,8 @@ def rerank_hits(state: GraphState) -> GraphState:
 
     # Prefer the resolved (context-aware) question for re-ranking
     query = state.get("resolved_question") or state["question"]
+    #Uses a CrossEncoder model (ms-marco-MiniLM...)
+    #It uses a trained neural model (CrossEncoder on MS MARCO) that learned from many examples
     ranked = rerank(query, unique)
     return {**state, "ranked_hits": ranked}
 
