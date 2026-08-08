@@ -28,3 +28,14 @@ Redis = ticket counter / waiting list
 Celery worker = kitchen staff cooking orders
 FastAPI = waiter who takes the order and later brings the food
 job_id = your order number
+
+An endpoint is one API URL + HTTP method that the server exposes for clients to call.
+In this project, the main FastAPI app is described as having 2 endpoints for the job flow:
+
+1. POST /jobs — submit
+Upload documents + question
+Creates a background job
+Returns job_id and status: queued
+2. GET /jobs/{job_id} — poll / fetch result
+Check that job’s status
+When finished, returns the Analyst/Auditor answer (or error)
