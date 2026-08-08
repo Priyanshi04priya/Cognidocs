@@ -16,8 +16,10 @@ class GraphState(TypedDict, total=False):
     job_id: str
     question: str
     file_paths: list[str]
+
     # Prior Q&A in this session so follow-ups like "describe it" make sense
     chat_history: list[dict[str, str]]
+    
     # Clarified question after resolving pronouns from history
     resolved_question: str
 
@@ -34,10 +36,10 @@ class GraphState(TypedDict, total=False):
     # After sub-query generation
     sub_queries: list[str]
 
-    # After retrieve
+    # After retrieve,  search results right after retrieval (before re-ranking)
     raw_hits: list[dict[str, Any]]
 
-    # After re-rank
+    # After re-rank, those results after re-ranking (sorted/filtered by relevance)
     ranked_hits: list[dict[str, Any]]
 
     # After generate

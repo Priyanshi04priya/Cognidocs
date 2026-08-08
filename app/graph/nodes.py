@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 DOMAINS = ["Legal", "Insurance", "HR", "Finance"]
 
-
+#client
 def _llm() -> ChatOpenAI:
     """Create a ChatOpenAI client (GPT-4.1 mini by default). Low temp = more faithful."""
     return ChatOpenAI(
@@ -51,10 +51,15 @@ def _llm() -> ChatOpenAI:
 
 def ingest_documents(state: GraphState) -> GraphState:
     """Load PDF, DOCX, and EML files into plain-text sections."""
+    #output me state update hoga 
+    #log me update karo jb bhi ingest ho rha hai
     logger.info("[%s] ingest_documents", state.get("job_id"))
     try:
+        #file_paths uploaded files(more than one file can be there) ka path hoga, load_documents function me pass karenge
         sections = load_documents(state["file_paths"])
         if not sections:
+            #If extraction returned nothing (empty list) then copy old state and we set an error message and mark the state as done
+            #done:True→stop the pipeline
             return {**state, "error": "No text could be extracted from the uploaded files.", "done": True}
         return {**state, "sections": sections, "error": None}
     except Exception as exc:
@@ -92,6 +97,12 @@ def detect_domain(state: GraphState) -> GraphState:
     """
     logger.info("[%s] detect_domain", state.get("job_id"))
     sections = state.get("sections") or []
+
+    """First 5 sections only
+       First 500 characters of each
+       Join into one string
+       Lowercase it
+       Why? Fast check — no need to scan the whole document."""
     sample = " ".join(s["text"][:500] for s in sections[:5]).lower()
 
     scores = {
@@ -100,8 +111,9 @@ def detect_domain(state: GraphState) -> GraphState:
     }
     best = max(scores, key=scores.get)
     best_score = scores[best]
-
-    # If scores are tied / very low, ask the LLM (when available)
+    
+    #phle khud se check karenge why bcz its cheap and fast, then if score is low or tied we will ask LLM to classify the domain
+    #as we are calling llm so we will check if openai key is set or not, if not then we will use keyword based classification
     if best_score < 2 and has_openai_key():
         try:
             llm = _llm()
