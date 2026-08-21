@@ -15,3 +15,4 @@ uploads/
 *.bin
 qdrant_storage/
 dump.rdb
+self_notes.txt
